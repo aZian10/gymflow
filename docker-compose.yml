@@ -1,0 +1,47 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: gymflow-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-gymflow_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gymflow_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-gymflow}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-gymflow_admin} -d ${POSTGRES_DB:-gymflow}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - gymflow-network
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gymflow-app
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-gymflow_admin}:${POSTGRES_PASSWORD:-gymflow_dev_password}@db:5432/${POSTGRES_DB:-gymflow}?schema=public
+      JWT_SECRET: ${JWT_SECRET:-development_jwt_secret_key_gymflow_min_32_chars}
+      PORT: 3000
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - gymflow-network
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  gymflow-network:
+    driver: bridge
