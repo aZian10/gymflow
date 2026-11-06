@@ -1,0 +1,118 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  schemas  = ["public", "tenant_template"]
+}
+
+// -------------------------------------------------------------
+// PUBLIC SCHEMA: Global SaaS Control Plane
+// -------------------------------------------------------------
+
+model Tenant {
+  id         String   @id @default(uuid())
+  name       String
+  slug       String   @unique
+  schemaName String   @unique @map("schema_name")
+  status     String   @default("ACTIVE")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  users           User[]
+  idempotencyKeys IdempotencyKey[]
+
+  @@map("tenants")
+  @@schema("public")
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  name         String
+  role         String   @default("TENANT_ADMIN")
+  tenantId     String?  @map("tenant_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@map("users")
+  @@schema("public")
+}
+
+model IdempotencyKey {
+  id           String    @id @default(uuid())
+  key          String    @unique
+  tenantId     String?   @map("tenant_id")
+  endpoint     String
+  status       String    @default("PROCESSING") // PROCESSING, COMPLETED, FAILED
+  statusCode   Int?      @map("status_code")
+  responseBody String?   @map("response_body")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  expiresAt    DateTime  @map("expires_at")
+
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+  @@map("idempotency_keys")
+  @@schema("public")
+}
+
+// -------------------------------------------------------------
+// TENANT TEMPLATE SCHEMA: Per-Gym Domain Tables
+// -------------------------------------------------------------
+
+model Member {
+  id               String          @id @default(uuid())
+  firstName        String          @map("first_name")
+  lastName         String          @map("last_name")
+  email            String
+  phone            String?
+  status           String          @default("ACTIVE") // ACTIVE, INACTIVE, OVERDUE
+  membershipPlanId String?         @map("membership_plan_id")
+  createdAt        DateTime        @default(now()) @map("created_at")
+  updatedAt        DateTime        @updatedAt @map("updated_at")
+
+  membershipPlan   MembershipPlan? @relation(fields: [membershipPlanId], references: [id], onDelete: SetNull)
+  attendances      Attendance[]
+
+  @@index([email])
+  @@map("members")
+  @@schema("tenant_template")
+}
+
+model MembershipPlan {
+  id           String   @id @default(uuid())
+  name         String
+  price        Decimal  @db.Decimal(10, 2)
+  durationDays Int      @map("duration_days")
+  description  String?
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  members Member[]
+
+  @@map("membership_plans")
+  @@schema("tenant_template")
+}
+
+model Attendance {
+  id          String   @id @default(uuid())
+  memberId    String   @map("member_id")
+  checkInTime DateTime @default(now()) @map("check_in_time")
+  notes       String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([memberId])
+  @@index([checkInTime])
+  @@map("attendances")
+  @@schema("tenant_template")
+}
