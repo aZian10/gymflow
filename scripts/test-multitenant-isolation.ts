@@ -98,12 +98,12 @@ async function main() {
 
   // Query Spartan Fitness
   const spartanMembers = await withTenantContext("gym_spartan_fitness", async (tx) => {
-    return tx.$queryRawUnsafe(`SELECT * FROM "members";`) as Array<{ first_name: string; email: string }>;
+    return (await tx.$queryRawUnsafe(`SELECT * FROM "members";`)) as Array<{ first_name: string; email: string }>;
   });
 
   // Query Titan Gym
   const titanMembers = await withTenantContext("gym_titan_gym", async (tx) => {
-    return tx.$queryRawUnsafe(`SELECT * FROM "members";`) as Array<{ first_name: string; email: string }>;
+    return (await tx.$queryRawUnsafe(`SELECT * FROM "members";`)) as Array<{ first_name: string; email: string }>;
   });
 
   console.log(`\nSpartan Fitness members count: ${spartanMembers.length}`);

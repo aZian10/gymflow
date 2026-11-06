@@ -5,6 +5,8 @@ import { prisma } from "@/lib/prisma";
 import { provisionTenantSchema } from "@/lib/tenant-provisioning";
 import { sanitizeSchemaName } from "@/lib/tenant-context";
 import { getSessionCookieOptions, signSessionToken } from "@/lib/auth";
+import { checkRateLimit, buildRateLimitResponse, getClientIp } from "@/lib/rate-limit";
+import { withIdempotency } from "@/lib/idempotency";
 
 const registerSchema = z.object({
   gymName: z.string().min(2, "Gym name must have at least 2 characters").max(100),
@@ -19,15 +21,29 @@ const registerSchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  try {
+  // 1. Rate Limiting on creation endpoint (10 requests per 60 seconds per IP)
+  const clientIp = getClientIp(req);
+  const rateLimit = checkRateLimit({
+    limit: 10,
+    windowMs: 60 * 1000,
+    identifier: clientIp,
+    endpointName: "auth:register",
+  });
+
+  if (!rateLimit.success) {
+    return buildRateLimitResponse(rateLimit);
+  }
+
+  // 2. Wrap with Idempotency Engine to prevent duplicate gym creation on network retries
+  return withIdempotency(req, null, async () => {
     const body = await req.json();
     const parsed = registerSchema.safeParse(body);
 
     if (!parsed.success) {
-      return NextResponse.json(
-        { error: "Validation failed", details: parsed.error.flatten().fieldErrors },
-        { status: 400 }
-      );
+      return {
+        status: 400,
+        data: { error: "Validation failed", details: parsed.error.flatten().fieldErrors },
+      };
     }
 
     const { gymName, gymSlug, adminName, adminEmail, adminPassword } = parsed.data;
@@ -39,17 +55,17 @@ export async function POST(req: NextRequest) {
     ]);
 
     if (existingSlug) {
-      return NextResponse.json(
-        { error: "A gym with this slug is already registered. Please choose another slug." },
-        { status: 409 }
-      );
+      return {
+        status: 409,
+        data: { error: "A gym with this slug is already registered. Please choose another slug." },
+      };
     }
 
     if (existingEmail) {
-      return NextResponse.json(
-        { error: "A user with this email address is already registered." },
-        { status: 409 }
-      );
+      return {
+        status: 409,
+        data: { error: "A user with this email address is already registered." },
+      };
     }
 
     // Generate sanitized schema name (e.g., gym_iron_fitness)
@@ -99,9 +115,11 @@ export async function POST(req: NextRequest) {
       tenantSlug: newTenant.slug,
     });
 
-    // Build response and set HttpOnly cookie
-    const response = NextResponse.json(
-      {
+    const cookieOptions = getSessionCookieOptions();
+
+    return {
+      status: 201,
+      data: {
         success: true,
         message: "Gym and administrator account registered successfully.",
         tenant: {
@@ -117,18 +135,6 @@ export async function POST(req: NextRequest) {
           role: newUser.role,
         },
       },
-      { status: 201 }
-    );
-
-    const cookieOptions = getSessionCookieOptions();
-    response.cookies.set(cookieOptions.name, token, cookieOptions);
-
-    return response;
-  } catch (error: unknown) {
-    console.error("Error during tenant registration:", error);
-    return NextResponse.json(
-      { error: "Internal server error occurred while provisioning tenant." },
-      { status: 500 }
-    );
-  }
+    };
+  });
 }

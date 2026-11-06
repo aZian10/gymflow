@@ -3,6 +3,7 @@ import { z } from "zod";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { getSessionCookieOptions, signSessionToken } from "@/lib/auth";
+import { checkRateLimit, buildRateLimitResponse, getClientIp } from "@/lib/rate-limit";
 
 const loginSchema = z.object({
   email: z.string().email("Invalid email address"),
@@ -10,6 +11,19 @@ const loginSchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
+  // 1. Mandatory Rate Limiting: 5 attempts per 60 seconds per IP to defend against credential brute-force
+  const clientIp = getClientIp(req);
+  const rateLimit = checkRateLimit({
+    limit: 5,
+    windowMs: 60 * 1000,
+    identifier: clientIp,
+    endpointName: "auth:login",
+  });
+
+  if (!rateLimit.success) {
+    return buildRateLimitResponse(rateLimit);
+  }
+
   try {
     const body = await req.json();
     const parsed = loginSchema.safeParse(body);
